@@ -1,14 +1,17 @@
 # Automated Ripping Machine (Windows · Qt)
 
 App **a schermo intero** in Qt (PySide6) che trasforma un PC Windows in una
-macchina di ripping automatica:
+macchina di ripping: riconoscimento e analisi sono automatici, ma **nessun rip parte
+senza un comando dell'utente**.
 
 1. **Inserisci il disco**: l'app lo rileva da sola (polling del lettore ottico).
 2. **Riconosce il tipo di disco**: Blu-ray, Blu-ray 4K UHD, DVD Video, CD Audio o disco dati.
 3. **Attende XReveal**: per i dischi video aspetta che XReveal abbia finito di
    decifrare, verificando il contenuto vero e proprio invece di affidarsi a un ritardo fisso.
-4. **Propone il processo corretto** (con avvio automatico dopo un conto alla rovescia configurabile).
-5. **Esegue il rip**, mostra avanzamento e log, poi **espelle** il disco ed è pronta per il successivo.
+4. **Propone il processo corretto** (preselezionato): il rip parte **solo quando premi Avvia**,
+   dopo aver eventualmente scelto un altro processo.
+5. **Esegue il rip**, mostra avanzamento e log. Al termine il disco resta nel lettore finché non premi
+   **Espelli** (l'espulsione automatica si può attivare nelle impostazioni).
 
 | Attesa disco | Attesa XReveal | Proposta del processo |
 |---|---|---|
@@ -39,7 +42,7 @@ protezione), per i DVD si leggono gli IFO e si sceglie il titolo più lungo.
 open source che offre le stesse garanzie della modalità sicura di EAC: rilettura
 con cd-paranoia finché i dati sono coerenti, correzione dell'offset del lettore,
 confronto di ogni traccia con il database AccurateRip, file lossless con CUE e log
-con checksum. Essendo CLI si integra in un processo completamente automatico.
+con checksum. Essendo CLI si integra direttamente nell'app.
 
 > **Importante per l'1:1:** imposta l'**offset di lettura** del tuo lettore
 > (Impostazioni → CD Audio). Puoi trovarlo su
