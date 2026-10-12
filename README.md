@@ -72,17 +72,45 @@ Attesa iniziale, intervallo di controllo, timeout e nomi del processo XReveal so
 
 * Windows 10/11 x64
 * [XReveal](https://www.videohelp.com/software/Xreveal) installato e in esecuzione
-* Python 3.10+ (solo se non usi l'eseguibile compilato)
-* Strumenti esterni (basta quelli dei processi che usi):
+  (l'installer lo scarica e installa per te)
+* Python 3.10+ (solo se usi i sorgenti invece dell'installer)
+* Strumenti esterni (l'installer li scarica da solo; a mano basta installare quelli dei processi che usi):
   * **cyanrip** – [release Windows](https://github.com/cyanreg/cyanrip/releases)
   * **MKVToolNix** (mkvmerge) – [mkvtoolnix.download](https://mkvtoolnix.download/)
-  * **ffmpeg** ≥ 7.0 *full build* (con libdvdnav/libdvdread, es. build "full" di gyan.dev)
+  * **ffmpeg** ≥ 7.0 con libdvdnav/libdvdread (build GPL di BtbN o "full" di gyan.dev)
 
 Gli eseguibili vengono cercati in quest'ordine: percorso indicato nelle impostazioni,
-cartella `tools\` accanto al programma, `PATH`, cartelle di installazione standard
+cartella `tools\` accanto al programma (anche nelle sottocartelle create dall'installer), `PATH`, cartelle di installazione standard
 (`C:\Program Files\MKVToolNix\…`). La schermata iniziale mostra quali strumenti sono stati trovati.
 
 ## Installazione e avvio
+
+### Con l'installer (consigliato)
+
+Scarica `AutoRipMachine-Setup-<versione>.exe` dalla pagina
+[Releases](https://github.com/adri6412/automated-ripping-machine/releases) e avvialo.
+L'installer:
+
+* installa l'app (eseguibile già compilato: **non serve Python**);
+* **scarica e installa i programmi esterni** (componenti selezionabili, tutti attivi nella
+  installazione completa):
+
+  | Programma | Fonte | Dove finisce |
+  |---|---|---|
+  | cyanrip | release ufficiali GitHub `cyanreg/cyanrip` | `<app>\tools\cyanrip\` |
+  | ffmpeg (build GPL con libdvdnav) | `BtbN/FFmpeg-Builds`, ultimo ramo stabile | `<app>\tools\ffmpeg\` |
+  | MKVToolNix | zip portable da mkvtoolnix.download | `<app>\tools\mkvtoolnix\` |
+  | XReveal | winget (`XrevealTeam.Xreveal`) o installer ufficiale da xreveal.com | installazione di sistema |
+
+* crea i collegamenti nel menu Start, compreso **"Aggiorna programmi esterni"**, che riscarica
+  le ultime versioni (stesso script: `installer\install-deps.ps1`);
+* opzionalmente avvia l'app all'accesso a Windows.
+
+La disinstallazione rimuove anche la cartella `tools`; XReveal resta installato e si
+rimuove dalle impostazioni di Windows. Se un download non riesce, l'installer completa
+comunque l'installazione e mostra il riepilogo: puoi riprovare con "Aggiorna programmi esterni".
+
+### Dai sorgenti
 
 ```bat
 git clone https://github.com/adri6412/automated-ripping-machine.git
@@ -91,23 +119,29 @@ start.bat
 ```
 
 `start.bat` crea un ambiente virtuale, installa PySide6 e avvia l'app senza finestra console.
-In alternativa:
+I programmi esterni si possono scaricare con lo stesso script dell'installer:
 
 ```bat
-pip install -r requirements.txt
-python -m arm            :: aggiungi --windowed per non partire a schermo intero
+powershell -ExecutionPolicy Bypass -File installer\install-deps.ps1 -InstallDir .
 ```
 
-**Eseguibile già pronto:** ad ogni *release* pubblicata su GitHub il workflow
-`.github/workflows/release.yml` esegue i test, compila l'exe con PyInstaller su Windows e
-allega alla release lo zip `AutoRipMachine-<tag>-win64.zip`. Può essere lanciato anche a mano
-da *Actions → Build Windows exe → Run workflow* (lo zip resta come artifact del run).
+In alternativa: `pip install -r requirements.txt` e `python -m arm` (aggiungi `--windowed`
+per non partire a schermo intero).
 
-Per compilarlo in locale: `build.bat` (PyInstaller) → `dist\AutoRipMachine\AutoRipMachine.exe`.
-Puoi copiare `cyanrip.exe`, `ffmpeg.exe`, `mkvmerge.exe` in `tools\` per un pacchetto autonomo.
+### Build e release automatiche
 
-Per un vero chiosco: metti un collegamento a `start.bat` (o all'exe) in
-`shell:startup` così l'app parte all'accensione.
+Ad ogni *release* pubblicata su GitHub il workflow `.github/workflows/release.yml`:
+
+1. esegue i test su Windows;
+2. compila l'exe con PyInstaller;
+3. crea l'installer con Inno Setup;
+4. prova davvero lo script di download dei programmi esterni;
+5. allega alla release `AutoRipMachine-Setup-<versione>.exe` e lo zip portable
+   `AutoRipMachine-<versione>-win64.zip`.
+
+Si può lanciare anche a mano da *Actions → Build Windows exe → Run workflow* (i file restano
+come artifact del run). In locale: `build.bat [versione]` crea l'exe e, se è installato
+[Inno Setup 6](https://jrsoftware.org/isdl.php), anche l'installer.
 
 ### Scorciatoie
 

@@ -4,6 +4,10 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+  pull_request:
+    paths:
+      - "installer/**"
+      - ".github/workflows/**"
 
 permissions:
   contents: write
@@ -29,29 +33,60 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: python -m unittest discover -s tests -t . -v
 
+      - name: Version
+        id: version
+        shell: pwsh
+        run: |
+          $version = if ($env:GITHUB_EVENT_NAME -eq "release") { "${{ github.event.release.tag_name }}" -replace '^v', '' } else { "0.0.0-dev.$($env:GITHUB_SHA.Substring(0,7))" }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
       - name: Build exe
         run: pyinstaller --noconfirm --windowed --name AutoRipMachine run.pyw
 
-      - name: Package
+      - name: Package zip
         id: package
         shell: pwsh
         run: |
-          $version = if ($env:GITHUB_EVENT_NAME -eq "release") { "${{ github.event.release.tag_name }}" } else { "dev-$($env:GITHUB_SHA.Substring(0,7))" }
           New-Item -ItemType Directory -Force dist/AutoRipMachine/tools | Out-Null
           Copy-Item README.md, LICENSE dist/AutoRipMachine/
-          Set-Content dist/AutoRipMachine/tools/LEGGIMI.txt "Copia qui cyanrip.exe, ffmpeg.exe e mkvmerge.exe per un pacchetto autonomo (oppure indica i percorsi nelle Impostazioni)."
-          $zip = "AutoRipMachine-$version-win64.zip"
+          Set-Content dist/AutoRipMachine/tools/LEGGIMI.txt "Copia qui cyanrip.exe, ffmpeg.exe e mkvmerge.exe per un pacchetto autonomo (oppure usa l'installer, che li scarica da solo)."
+          $zip = "dist/AutoRipMachine-${{ steps.version.outputs.version }}-win64.zip"
           Compress-Archive -Path dist/AutoRipMachine -DestinationPath $zip
+          Remove-Item dist/AutoRipMachine/tools -Recurse -Force
           "zip=$zip" >> $env:GITHUB_OUTPUT
 
-      - name: Upload build artifact
+      - name: Build installer
+        id: installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --no-progress -y
+          }
+          & $iscc "/DMyAppVersion=${{ steps.version.outputs.version }}" installer\AutoRipMachine.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "setup=dist/AutoRipMachine-Setup-${{ steps.version.outputs.version }}.exe" >> $env:GITHUB_OUTPUT
+
+      # Exercises the real download URLs on Windows, then checks the app finds every tool.
+      - name: Test dependency downloader
+        shell: pwsh
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File installer\install-deps.ps1 `
+            -InstallDir $env:GITHUB_WORKSPACE -Cyanrip -FFmpeg -MKVToolNix -NoPause
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -c "from arm.core.config import find_tool; paths = {n: find_tool(n) for n in ('cyanrip', 'ffmpeg', 'mkvmerge')}; print(paths); assert all(paths.values())"
+          & (python -c "from arm.core.config import find_tool; print(find_tool('mkvmerge'))") --version
+
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: AutoRipMachine-win64
-          path: ${{ steps.package.outputs.zip }}
+          path: |
+            ${{ steps.package.outputs.zip }}
+            ${{ steps.installer.outputs.setup }}
 
       - name: Attach to release
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" "${{ steps.package.outputs.zip }}" --clobber --repo "${{ github.repository }}"
+        run: gh release upload "${{ github.event.release.tag_name }}" "${{ steps.installer.outputs.setup }}" "${{ steps.package.outputs.zip }}" --clobber --repo "${{ github.repository }}"

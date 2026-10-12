@@ -122,6 +122,19 @@ class IdentifyTests(unittest.TestCase):
         info.type = DiscType.UHD_BLURAY
         self.assertEqual(processes.default_process(info, cfg).id, "bd_backup")
 
+    def test_find_tool_in_installer_layout(self):
+        from unittest import mock
+        from arm.core import config
+        exe = "ffmpeg.exe" if sys.platform == "win32" else "ffmpeg"
+        with TemporaryDirectory() as tmp, mock.patch.object(config, "install_dir",
+                                                          return_value=Path(tmp)), \
+                mock.patch.object(config.shutil, "which", return_value=None):
+            nested = Path(tmp) / "tools" / "ffmpeg" / "ffmpeg-n7.1-latest-win64-gpl-7.1" / "bin"
+            nested.mkdir(parents=True)
+            (nested / exe).write_bytes(b"")
+            self.assertEqual(config.find_tool("ffmpeg"), str(nested / exe))
+            self.assertIsNone(config.find_tool("cyanrip"))
+
     def test_sanitize(self):
         self.assertEqual(disc.sanitize('A:B/C*D?'), "A_B_C_D_")
         self.assertEqual(disc.pretty_label("THE_MATRIX_D1"), "The Matrix D1")
