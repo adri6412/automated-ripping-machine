@@ -58,9 +58,8 @@ class Config:
     default_audio: str = "cd_flac"
     default_data: str = "data_copy"
 
-    # Automation
-    autostart_countdown_s: int = 15     # 0 = never auto-start
-    eject_when_done: bool = True
+    # Nothing starts on its own: rips begin only when the user presses "Avvia".
+    eject_when_done: bool = False
     min_main_title_minutes: int = 20
 
     # Audio CD

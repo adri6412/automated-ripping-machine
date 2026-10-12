@@ -36,7 +36,6 @@ class MainWindow(QMainWindow):
         self.job = None
         self.job_process = None
         self.job_started = 0.0
-        self.countdown_left = 0
         self.result_path: Path | None = None
         self.log_file = None
         self.last_ok = False
@@ -65,15 +64,12 @@ class MainWindow(QMainWindow):
         self.wait.eject.connect(self._eject)
         self.proposal.start.connect(self._start_process)
         self.proposal.eject.connect(self._eject)
-        self.proposal.selection_changed.connect(self._stop_countdown)
         self.run.cancel.connect(self._cancel_job)
         self.run.toggle_log.connect(self._remember_log_pref)
         self.done.dismiss.connect(self._dismiss_result)
         self.done.open_folder.connect(self._open_result)
         self.done.eject.connect(self._eject)
 
-        self.countdown_timer = QTimer(self)
-        self.countdown_timer.timeout.connect(self._countdown_tick)
         self.clock_timer = QTimer(self)
         self.clock_timer.timeout.connect(self._tick)
         self.clock_timer.start(1000)
@@ -172,7 +168,6 @@ class MainWindow(QMainWindow):
 
     # ---------------------------------------------------------------- states
     def _show_idle(self) -> None:
-        self._stop_countdown()
         self.info = None
         self.idle.disc.set_kind("none")
         self.idle.disc.set_spinning(False)
@@ -199,7 +194,6 @@ class MainWindow(QMainWindow):
 
     def _start_analysis(self, skip_wait: bool) -> None:
         self._stop_analyzer()
-        self._stop_countdown()
         self.wait.set_mode(timed_out=False)
         self.wait.disc.set_kind("unknown")
         self.wait.type_badge.setText("Rilevamento…")
@@ -301,18 +295,9 @@ class MainWindow(QMainWindow):
             options.append((proc.id, proc.name, desc, enabled, proc is default))
         p.set_options(options)
         self.stack.setCurrentWidget(p)
-
-        if self.cfg.autostart_countdown_s > 0 and p.selected():
-            self.countdown_left = self.cfg.autostart_countdown_s
-            p.countdown_bar.setRange(0, self.countdown_left * 10)
-            p.countdown_bar.setValue(self.countdown_left * 10)
-            p.countdown_bar.setVisible(True)
-            self._countdown_ms = self.countdown_left * 1000
-            self.countdown_timer.start(100)
-            self._update_countdown_label()
-        else:
-            p.countdown.setText("Scegli il processo e premi Avvia.")
-            p.countdown_bar.setVisible(False)
+        # Never start on our own: the rip begins only when the user presses "Avvia".
+        p.hint.setText("Scegli il processo e premi Avvia." if p.selected()
+                       else "Nessun processo disponibile: controlla i programmi nelle impostazioni.")
 
     def _process_possible(self, proc, info: DiscInfo) -> bool:
         if proc.id == "bd_mkv_main":
@@ -340,30 +325,8 @@ class MainWindow(QMainWindow):
         lines.append(f"Unità {info.drive}")
         return "\n".join(lines)
 
-    def _update_countdown_label(self) -> None:
-        secs = max(0, (self._countdown_ms + 999) // 1000)
-        self.proposal.countdown.setText(f"Avvio automatico tra {secs} s — tocca un'opzione per "
-                                        "scegliere manualmente.")
-
-    def _countdown_tick(self) -> None:
-        self._countdown_ms -= 100
-        self.proposal.countdown_bar.setValue(max(0, self._countdown_ms // 100))
-        self._update_countdown_label()
-        if self._countdown_ms <= 0:
-            self.countdown_timer.stop()
-            pid = self.proposal.selected()
-            if pid:
-                self._start_process(pid)
-
-    def _stop_countdown(self) -> None:
-        if self.countdown_timer.isActive():
-            self.countdown_timer.stop()
-            self.proposal.countdown.setText("Avvio automatico sospeso. Premi Avvia quando sei pronto.")
-            self.proposal.countdown_bar.setVisible(False)
-
     # ----------------------------------------------------------------- running
     def _start_process(self, pid: str) -> None:
-        self._stop_countdown()
         info = self.info
         if info is None or self.job is not None:
             return
@@ -463,7 +426,6 @@ class MainWindow(QMainWindow):
 
     def _eject(self) -> None:
         self._stop_analyzer()
-        self._stop_countdown()
         if self.drive:
             winapi.eject(self.drive)
         if self.stack.currentWidget() is not self.done:
@@ -474,7 +436,6 @@ class MainWindow(QMainWindow):
         if self._busy():
             QMessageBox.information(self, "Impostazioni", "Attendi la fine del rip in corso.")
             return
-        self._stop_countdown()
         dlg = SettingsDialog(self.cfg, self)
         if self.isFullScreen():
             dlg.setWindowState(Qt.WindowState.WindowMaximized)

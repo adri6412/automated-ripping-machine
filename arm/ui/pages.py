@@ -192,7 +192,6 @@ class OptionCard(QFrame):
 class ProposalPage(QWidget):
     start = Signal(str)          # process id
     eject = Signal()
-    selection_changed = Signal()
 
     def __init__(self):
         super().__init__()
@@ -222,12 +221,8 @@ class ProposalPage(QWidget):
         self.options_box.setSpacing(12)
         right.addLayout(self.options_box)
         right.addSpacing(10)
-        self.countdown = label("", "muted")
-        right.addWidget(self.countdown)
-        self.countdown_bar = QProgressBar()
-        self.countdown_bar.setObjectName("thin")
-        self.countdown_bar.setTextVisible(False)
-        right.addWidget(self.countdown_bar)
+        self.hint = label("", "muted")
+        right.addWidget(self.hint)
         right.addSpacing(16)
         row = QHBoxLayout()
         self.eject_btn = button("⏏  Espelli", "danger", self.eject.emit)
@@ -264,7 +259,6 @@ class ProposalPage(QWidget):
         for c in self._cards:
             c.setChecked(c is card_)
         self.start_btn.setEnabled(True)
-        self.selection_changed.emit()
 
     def selected(self) -> str | None:
         return next((c.pid for c in self._cards if c.isChecked()), None)

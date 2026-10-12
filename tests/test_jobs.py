@@ -8,14 +8,15 @@ from tempfile import TemporaryDirectory
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QCoreApplication, QEventLoop, QTimer  # noqa: E402
+from PySide6.QtCore import QEventLoop, QTimer  # noqa: E402
+from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from arm.jobs.cd_job import CyanripJob  # noqa: E402
 from arm.jobs.copy_job import CopyJob  # noqa: E402
 from arm.jobs.video_jobs import BlurayMkvJob  # noqa: E402
 from tests import fixtures  # noqa: E402
 
-APP = QCoreApplication.instance() or QCoreApplication([])
+APP = QApplication.instance() or QApplication([])
 
 
 def run_job(job, timeout_ms=20000):
