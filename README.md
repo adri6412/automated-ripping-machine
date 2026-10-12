@@ -95,7 +95,12 @@ pip install -r requirements.txt
 python -m arm            :: aggiungi --windowed per non partire a schermo intero
 ```
 
-Per un eseguibile standalone: `build.bat` (PyInstaller) → `dist\AutoRipMachine\AutoRipMachine.exe`.
+**Eseguibile già pronto:** ad ogni *release* pubblicata su GitHub il workflow
+`.github/workflows/release.yml` esegue i test, compila l'exe con PyInstaller su Windows e
+allega alla release lo zip `AutoRipMachine-<tag>-win64.zip`. Può essere lanciato anche a mano
+da *Actions → Build Windows exe → Run workflow* (lo zip resta come artifact del run).
+
+Per compilarlo in locale: `build.bat` (PyInstaller) → `dist\AutoRipMachine\AutoRipMachine.exe`.
 Puoi copiare `cyanrip.exe`, `ffmpeg.exe`, `mkvmerge.exe` in `tools\` per un pacchetto autonomo.
 
 Per un vero chiosco: metti un collegamento a `start.bat` (o all'exe) in
