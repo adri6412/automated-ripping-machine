@@ -3,23 +3,20 @@
     Scarica e installa i programmi esterni usati da Automated Ripping Machine.
 
 .DESCRIPTION
-    - cyanrip     -> <InstallDir>\tools\cyanrip\cyanrip.exe   (GitHub cyanreg/cyanrip)
-    - ffmpeg      -> <InstallDir>\tools\ffmpeg\...\ffmpeg.exe (build GPL BtbN, con libdvdnav)
-    - MKVToolNix  -> <InstallDir>\tools\mkvtoolnix\...        (zip portable ufficiale)
-    - XReveal     -> installazione di sistema (winget o installer ufficiale)
+    - cyanrip  -> <InstallDir>\tools\cyanrip\cyanrip.exe   (GitHub cyanreg/cyanrip)
+    - MakeMKV  -> installazione di sistema (winget o installer ufficiale da makemkv.com)
+                  + chiave beta gratuita dal forum ufficiale, se non c'e' una licenza
 
     Senza switch installa tutto. Puo' essere rieseguito per aggiornare i programmi.
 
 .EXAMPLE
-    install-deps.ps1 -InstallDir "C:\Program Files\AutoRipMachine" -Cyanrip -FFmpeg
+    install-deps.ps1 -InstallDir "C:\Program Files\AutoRipMachine" -Cyanrip -MakeMKV
 #>
 [CmdletBinding()]
 param(
     [string]$InstallDir = (Split-Path -Parent $PSScriptRoot),
     [switch]$Cyanrip,
-    [switch]$FFmpeg,
-    [switch]$MKVToolNix,
-    [switch]$XReveal,
+    [switch]$MakeMKV,
     [switch]$NoPause
 )
 
@@ -27,8 +24,8 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'   # Invoke-WebRequest e' lentissimo con la barra attiva
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-if (-not ($Cyanrip -or $FFmpeg -or $MKVToolNix -or $XReveal)) {
-    $Cyanrip = $FFmpeg = $MKVToolNix = $XReveal = $true
+if (-not ($Cyanrip -or $MakeMKV)) {
+    $Cyanrip = $MakeMKV = $true
 }
 
 # --- Elevazione: la cartella in Program Files richiede i diritti di amministratore ----------
@@ -49,12 +46,12 @@ function Test-Writable([string]$dir) {
 }
 
 $Tools = Join-Path $InstallDir 'tools'
-if (-not (Test-Writable $Tools) -or ($XReveal -and -not (Test-Admin))) {
+if (-not (Test-Writable $Tools) -or ($MakeMKV -and -not (Test-Admin))) {
     if (-not (Test-Admin)) {
         Write-Host "Richiesti i permessi di amministratore, riavvio elevato..."
         $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"",
                      '-InstallDir', "`"$InstallDir`"")
-        foreach ($sw in 'Cyanrip', 'FFmpeg', 'MKVToolNix', 'XReveal', 'NoPause') {
+        foreach ($sw in 'Cyanrip', 'MakeMKV', 'NoPause') {
             if ((Get-Variable $sw).Value) { $argList += "-$sw" }
         }
         $p = Start-Process powershell.exe -Verb RunAs -ArgumentList $argList -Wait -PassThru
@@ -145,74 +142,63 @@ if ($Cyanrip) {
     }
 }
 
-# --- ffmpeg (BtbN GPL: include libdvdread/libdvdnav per il demuxer dvdvideo) ------------------
-if ($FFmpeg) {
-    Invoke-Component 'ffmpeg' {
-        $url = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip'
-        try {
-            $rel = Get-GitHubLatest 'BtbN/FFmpeg-Builds'
-            # Preferisce l'ultimo ramo stabile (es. ffmpeg-n7.1-latest-win64-gpl-7.1.zip)
-            $stable = $rel.assets |
-                Where-Object { $_.name -match '^ffmpeg-n(\d+)\.(\d+).*-latest-win64-gpl-[\d.]+\.zip$' } |
-                Sort-Object { [int]($_.name -replace '^ffmpeg-n(\d+)\.(\d+).*$', '$1') * 100 +
-                              [int]($_.name -replace '^ffmpeg-n(\d+)\.(\d+).*$', '$2') } -Descending |
-                Select-Object -First 1
-            if ($stable) { $url = $stable.browser_download_url }
-        } catch { Write-Host "    API GitHub non raggiungibile, uso la build master" }
-        $zip = Join-Path $Temp 'ffmpeg.zip'
-        Get-File $url $zip
-        $dir = Join-Path $Tools 'ffmpeg'
-        Expand-Zip $zip $dir
-        $exe = Find-Exe $dir 'ffmpeg.exe'
-        if (-not $exe) { throw 'ffmpeg.exe non trovato nello zip' }
-        $demuxers = & $exe -hide_banner -demuxers 2>&1 | Out-String
-        if ($demuxers -notmatch 'dvdvideo') { throw 'questa build di ffmpeg non contiene il demuxer dvdvideo' }
-        (Split-Path -Leaf $url) + " -> $exe"
-    }
-}
-
-# --- MKVToolNix (zip portable ufficiale) ------------------------------------------------------
-if ($MKVToolNix) {
-    Invoke-Component 'MKVToolNix' {
-        $base = 'https://mkvtoolnix.download/windows/releases/'
-        $listing = (Invoke-WebRequest -Uri $base -UserAgent $UserAgent -UseBasicParsing).Content
-        $versions = [regex]::Matches($listing, 'href="\./(\d+(?:\.\d+)+)/"') |
-            ForEach-Object { $_.Groups[1].Value } | Sort-Object { [version]$_ } -Descending
-        $zip = Join-Path $Temp 'mkvtoolnix.zip'
-        $done = $null
-        foreach ($v in ($versions | Select-Object -First 3)) {
-            # La cartella piu' recente puo' essere ancora vuota durante una pubblicazione.
-            try { Get-File "$base$v/mkvtoolnix-64-bit-$v.zip" $zip; $done = $v; break } catch { }
+# --- MakeMKV (decifra e rippa DVD / Blu-ray / UHD) --------------------------------------------
+function Find-MakeMKVCon {
+    foreach ($dir in "${env:ProgramFiles(x86)}\MakeMKV", "$env:ProgramFiles\MakeMKV") {
+        foreach ($exe in 'makemkvcon64.exe', 'makemkvcon.exe') {
+            $p = Join-Path $dir $exe
+            if (Test-Path $p) { return $p }
         }
-        if (-not $done) { throw 'impossibile scaricare MKVToolNix' }
-        $dir = Join-Path $Tools 'mkvtoolnix'
-        Expand-Zip $zip $dir
-        $exe = Find-Exe $dir 'mkvmerge.exe'
-        if (-not $exe) { throw 'mkvmerge.exe non trovato nello zip' }
-        "$done -> $exe"
     }
+    return $null
 }
 
-# --- XReveal (installazione di sistema) -------------------------------------------------------
-if ($XReveal) {
-    Invoke-Component 'XReveal' {
+if ($MakeMKV) {
+    Invoke-Component 'MakeMKV' {
+        $how = $null
         $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
         if ($winget) {
-            & $winget.Source install --id XrevealTeam.Xreveal -e --silent `
+            & $winget.Source install --id GuinpinSoft.MakeMKV -e --silent `
                 --accept-package-agreements --accept-source-agreements --disable-interactivity | Out-Host
             # 0 = installato, -1978335189 = gia' installato/nessun aggiornamento
-            if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq -1978335189) { return 'installato con winget' }
-            Write-Host "    winget ha restituito $LASTEXITCODE, provo con l'installer ufficiale"
+            if (($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq -1978335189) -and (Find-MakeMKVCon)) {
+                $how = 'winget'
+            } else {
+                Write-Host "    winget ha restituito $LASTEXITCODE, provo con l'installer ufficiale"
+            }
         }
-        $page = (Invoke-WebRequest -Uri 'https://www.xreveal.com/' -UserAgent $UserAgent -UseBasicParsing).Content
-        $m = [regex]::Match($page, 'https://download\.xreveal\.com/xreveal_[\d.]+(?:_x64)?\.exe')
-        if (-not $m.Success) { throw 'link di download non trovato su xreveal.com' }
-        $setup = Join-Path $Temp (Split-Path -Leaf $m.Value)
-        Get-File $m.Value $setup
-        $p = Start-Process -FilePath $setup -ArgumentList '/s' -Wait -PassThru
-        if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { throw "installer terminato con codice $($p.ExitCode)" }
-        $note = if ($p.ExitCode -eq 3010) { ' (richiede il riavvio)' } else { '' }
-        (Split-Path -Leaf $m.Value) + $note
+        if (-not $how) {
+            $page = (Invoke-WebRequest -Uri 'https://www.makemkv.com/download/' -UserAgent $UserAgent `
+                -UseBasicParsing).Content
+            $m = [regex]::Match($page, 'Setup_MakeMKV_v[\d.]+\.exe')
+            if (-not $m.Success) { throw 'link di download non trovato su makemkv.com' }
+            $setup = Join-Path $Temp $m.Value
+            Get-File "https://www.makemkv.com/download/$($m.Value)" $setup
+            $p = Start-Process -FilePath $setup -ArgumentList '/S' -Wait -PassThru
+            if ($p.ExitCode -ne 0) { throw "installer terminato con codice $($p.ExitCode)" }
+            $how = $m.Value
+        }
+        $exe = Find-MakeMKVCon
+        if (-not $exe) { throw 'makemkvcon non trovato dopo l''installazione' }
+
+        # Chiave: la beta gratuita viene aggiornata ogni mese sul forum ufficiale.
+        $regPath = 'HKCU:\Software\MakeMKV'
+        $current = (Get-ItemProperty -Path $regPath -Name app_Key -ErrorAction SilentlyContinue).app_Key
+        $keyInfo = 'licenza registrata'
+        if (-not $current -or $current.StartsWith('T-')) {
+            try {
+                $forum = (Invoke-WebRequest -Uri 'https://forum.makemkv.com/forum/viewtopic.php?t=1053' `
+                    -UserAgent $UserAgent -UseBasicParsing).Content
+                $k = [regex]::Match($forum, '<code>\s*(T-[A-Za-z0-9@_\-]{20,})\s*</code>')
+                if (-not $k.Success) { throw 'chiave non trovata' }
+                New-Item -Path $regPath -Force | Out-Null
+                Set-ItemProperty -Path $regPath -Name app_Key -Value $k.Groups[1].Value
+                $keyInfo = 'chiave beta impostata'
+            } catch {
+                $keyInfo = "chiave beta NON impostata ($($_.Exception.Message)): inseriscila dalle impostazioni dell'app"
+            }
+        }
+        "$how -> $exe ($keyInfo)"
     }
 }
 
@@ -225,7 +211,7 @@ $failed = @($Results.Values | Where-Object { $_ -like 'ERRORE*' }).Count
 if ($failed -gt 0) {
     Write-Host ""
     Write-Host "$failed componenti non installati. Puoi riprovare dal menu Start:" -ForegroundColor Yellow
-    Write-Host "'Automated Ripping Machine - Aggiorna programmi esterni'." -ForegroundColor Yellow
+    Write-Host "'Aggiorna programmi esterni'." -ForegroundColor Yellow
     if (-not $NoPause) { Read-Host "Premi Invio per chiudere" | Out-Null }
     exit 1
 }

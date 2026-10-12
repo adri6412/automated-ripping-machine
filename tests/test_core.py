@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from arm.core import bluray, decryption, disc, dvd  # noqa: E402
+from arm.core import bluray, disc, makemkv  # noqa: E402
 from arm.core.config import Config  # noqa: E402
 from arm.core.disc import DiscType  # noqa: E402
 from arm.core import processes  # noqa: E402
@@ -14,60 +14,40 @@ from tests import fixtures  # noqa: E402
 
 
 class BlurayTests(unittest.TestCase):
-    def test_parse_mpls(self):
-        duration, clips, chapters = bluray.parse_mpls(
-            fixtures.make_mpls([("00010", 3600), ("00011", 2400)], chapters=24))
-        self.assertAlmostEqual(duration, 6000, places=3)
-        self.assertEqual(clips, ["00010", "00011"])
-        self.assertEqual(chapters, 24)
-
-    def test_main_playlist_skips_decoys(self):
-        with TemporaryDirectory() as tmp:
-            root = fixtures.make_bluray(Path(tmp))
-            pls = bluray.scan_playlists(root)
-            self.assertEqual(len(pls), 3)
-            main = bluray.pick_main_playlist(pls, 20 * 60)
-            self.assertEqual(main.name, "00800.mpls")
+    def test_title_and_uhd(self):
+        with TemporaryDirectory() as a, TemporaryDirectory() as b:
+            root = fixtures.make_bluray(Path(a))
             self.assertEqual(bluray.disc_title(root), "Test Movie")
             self.assertFalse(bluray.is_uhd(root))
-
-    def test_uhd(self):
-        with TemporaryDirectory() as tmp:
-            self.assertTrue(bluray.is_uhd(fixtures.make_bluray(Path(tmp), uhd=True)))
+            self.assertTrue(bluray.is_uhd(fixtures.make_bluray(Path(b), uhd=True)))
 
 
-class DvdTests(unittest.TestCase):
-    def test_titles(self):
-        with TemporaryDirectory() as tmp:
-            root = fixtures.make_dvd(Path(tmp))
-            titles = dvd.scan_titles(root)
-            self.assertEqual([t.number for t in titles], [1, 2, 3])
-            self.assertEqual([round(t.duration) for t in titles], [120, 5700, 60])
-            main = dvd.pick_main_title(titles)
-            self.assertEqual(main.number, 2)
-            self.assertEqual(main.chapters, 28)
+class MakeMKVTests(unittest.TestCase):
+    def test_parse_fields_with_quotes_and_escapes(self):
+        self.assertEqual(makemkv.parse_fields('1,2,"a, \\"b\\"",""'), ["1", "2", 'a, "b"', ""])
+        self.assertEqual(makemkv.parse_line('TINFO:0,9,0,"1:40:00"'), ("TINFO", ["0", "9", "0", "1:40:00"]))
+        self.assertIsNone(makemkv.parse_line("random text"))
 
+    def test_parse_info(self):
+        scan = makemkv.parse_output(fixtures.MAKEMKV_INFO.splitlines())
+        self.assertEqual(scan.disc_type, "Blu-ray disc")
+        self.assertEqual(scan.name, "Test Movie")
+        self.assertEqual(len(scan.titles), 3)
+        t0 = scan.titles[0]
+        self.assertEqual((t0.duration, t0.chapters, t0.size_bytes, t0.source_file),
+                         (6000.0, 24, 27166914560, "00800.mpls"))
+        self.assertEqual(scan.main_title().id, 0)          # the 1:39:59 decoy is smaller
+        self.assertEqual(len(scan.drives), 2)
+        self.assertEqual(makemkv.find_drive(scan.drives, "d:").index, 0)
+        self.assertEqual(makemkv.find_drive(scan.drives, "SIM:").index, 0)   # single disc fallback
 
-class DecryptionTests(unittest.TestCase):
-    def test_vob_sector(self):
-        self.assertTrue(decryption.dvd_sector_scrambled(fixtures.vob_sector(True)))
-        self.assertFalse(decryption.dvd_sector_scrambled(fixtures.vob_sector(False)))
-        self.assertIsNone(decryption.dvd_sector_scrambled(b"\x00" * 2048))
+    def test_key_problem(self):
+        self.assertIsNone(makemkv.key_problem(["Operation successfully completed"]))
+        self.assertTrue(makemkv.key_problem(["This application version is too old."]))
 
-    def test_ts_unit(self):
-        self.assertTrue(decryption.ts_unit_clear(fixtures.ts_unit(False)))
-        self.assertFalse(decryption.ts_unit_clear(fixtures.ts_unit(True)))
-
-    def test_dvd_check(self):
-        with TemporaryDirectory() as a, TemporaryDirectory() as b:
-            self.assertTrue(decryption.check_dvd(fixtures.make_dvd(Path(a))).ready)
-            self.assertFalse(decryption.check_dvd(fixtures.make_dvd(Path(b), scrambled=True)).ready)
-
-    def test_bluray_check(self):
-        with TemporaryDirectory() as a, TemporaryDirectory() as b:
-            self.assertTrue(decryption.check_bluray(fixtures.make_bluray(Path(a))).ready)
-            self.assertFalse(decryption.check_bluray(
-                fixtures.make_bluray(Path(b), encrypted=True)).ready)
+    def test_duration(self):
+        self.assertEqual(makemkv.parse_duration("0:12:30"), 750)
+        self.assertEqual(makemkv.parse_duration("bad"), 0)
 
 
 class IdentifyTests(unittest.TestCase):
@@ -109,10 +89,6 @@ class IdentifyTests(unittest.TestCase):
             self.assertEqual(cd_info.audio_tracks, 12)
             self.assertEqual(self.identify(data).type, DiscType.DATA)
 
-            disc.analyze_video(info, 20 * 60)
-            self.assertTrue(info.details["main_playlist"].endswith("00800.mpls"))
-            disc.analyze_video(dvd_info, 20 * 60)
-            self.assertEqual(dvd_info.details["main_title"], 2)
 
     def test_default_process(self):
         cfg = Config()
@@ -120,19 +96,23 @@ class IdentifyTests(unittest.TestCase):
         cfg.cyanrip_path = sys.executable    # pretend the tool exists
         self.assertEqual(processes.default_process(info, cfg).id, "cd_flac")
         info.type = DiscType.UHD_BLURAY
-        self.assertEqual(processes.default_process(info, cfg).id, "bd_backup")
+        cfg.makemkvcon_path = sys.executable
+        self.assertEqual(processes.default_process(info, cfg).id, "mkv_main")
+        self.assertEqual([p.id for p in processes.processes_for(DiscType.DVD_VIDEO)],
+                         ["mkv_main", "mkv_all"])          # MakeMKV backup is Blu-ray only
 
     def test_find_tool_in_installer_layout(self):
         from unittest import mock
         from arm.core import config
-        exe = "ffmpeg.exe" if sys.platform == "win32" else "ffmpeg"
+        exe = "makemkvcon64.exe" if sys.platform == "win32" else "makemkvcon64"
         with TemporaryDirectory() as tmp, mock.patch.object(config, "install_dir",
                                                           return_value=Path(tmp)), \
-                mock.patch.object(config.shutil, "which", return_value=None):
-            nested = Path(tmp) / "tools" / "ffmpeg" / "ffmpeg-n7.1-latest-win64-gpl-7.1" / "bin"
+                mock.patch.object(config.shutil, "which", return_value=None), \
+                mock.patch.dict(config._TOOL_HINTS, clear=True):
+            nested = Path(tmp) / "tools" / "makemkv" / "MakeMKV"
             nested.mkdir(parents=True)
             (nested / exe).write_bytes(b"")
-            self.assertEqual(config.find_tool("ffmpeg"), str(nested / exe))
+            self.assertEqual(config.find_tool("makemkvcon"), str(nested / exe))
             self.assertIsNone(config.find_tool("cyanrip"))
 
     def test_sanitize(self):

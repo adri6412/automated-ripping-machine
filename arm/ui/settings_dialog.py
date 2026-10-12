@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFileDialog, QForm
                                QHBoxLayout, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton,
                                QSpinBox, QTabWidget, QVBoxLayout, QWidget)
 
-from ..core import disc
+from ..core import disc, makemkv
 from ..core.config import Config, find_tool
 from ..core.disc import DiscType
 from ..core.processes import processes_for
@@ -91,41 +91,37 @@ class SettingsDialog(QDialog):
             combo.setCurrentIndex(max(0, combo.findData(getattr(cfg, attr))))
             self.defaults[attr] = combo
             f.addRow(dtype.label, combo)
-        self.min_title = QSpinBox()
-        self.min_title.setRange(0, 300)
-        self.min_title.setSuffix(" min")
-        self.min_title.setValue(cfg.min_main_title_minutes)
-        f.addRow("Durata minima film principale", self.min_title)
         tabs.addTab(procs, "Processi predefiniti")
 
-        # --- XReveal -----------------------------------------------------
-        xr = QWidget()
-        f = QFormLayout(xr)
+        # --- MakeMKV -----------------------------------------------------
+        mk = QWidget()
+        f = QFormLayout(mk)
         f.setSpacing(14)
-        f.addRow(label("XReveal decifra il disco in background subito dopo l'inserimento. "
-                       "L'app verifica il contenuto (settori CSS / unità AACS) e attende finché "
-                       "i dati non risultano in chiaro.", "muted"))
-        self.xr_names = QLineEdit(cfg.xreveal_process_names)
-        f.addRow("Nomi processo XReveal", self.xr_names)
-        self.xr_warn = QCheckBox("Avvisa se XReveal non è in esecuzione")
-        self.xr_warn.setChecked(cfg.xreveal_warn_if_not_running)
-        f.addRow("", self.xr_warn)
-        self.xr_delay = QSpinBox()
-        self.xr_delay.setRange(0, 300)
-        self.xr_delay.setSuffix(" s")
-        self.xr_delay.setValue(cfg.xreveal_initial_delay_s)
-        f.addRow("Attesa iniziale", self.xr_delay)
-        self.xr_poll = QSpinBox()
-        self.xr_poll.setRange(1, 60)
-        self.xr_poll.setSuffix(" s")
-        self.xr_poll.setValue(cfg.xreveal_poll_interval_s)
-        f.addRow("Intervallo verifiche", self.xr_poll)
-        self.xr_timeout = QSpinBox()
-        self.xr_timeout.setRange(10, 7200)
-        self.xr_timeout.setSuffix(" s")
-        self.xr_timeout.setValue(cfg.xreveal_timeout_s)
-        f.addRow("Timeout decifratura", self.xr_timeout)
-        tabs.addTab(xr, "XReveal")
+        f.addRow(label("MakeMKV legge e decifra DVD, Blu-ray e 4K UHD e li salva in MKV senza "
+                       "perdita. Senza una licenza acquistata funziona con la chiave beta "
+                       "gratuita pubblicata ogni mese sul forum ufficiale.", "muted"))
+        key_row = QWidget()
+        krl = QHBoxLayout(key_row)
+        krl.setContentsMargins(0, 0, 0, 0)
+        self.mk_key = QLineEdit(makemkv.get_registered_key() or "")
+        self.mk_key.setPlaceholderText("T-… oppure la tua chiave di registrazione")
+        krl.addWidget(self.mk_key, 1)
+        krl.addWidget(button("Scarica chiave beta", "", self._fetch_beta_key))
+        f.addRow("Chiave MakeMKV", key_row)
+        self.mk_auto = QCheckBox("Aggiorna automaticamente la chiave beta all'avvio")
+        self.mk_auto.setChecked(cfg.makemkv_auto_beta_key)
+        f.addRow("", self.mk_auto)
+        self.mk_min = QSpinBox()
+        self.mk_min.setRange(0, 7200)
+        self.mk_min.setSuffix(" s")
+        self.mk_min.setValue(cfg.makemkv_min_title_s)
+        f.addRow("Durata minima dei titoli", self.mk_min)
+        self.mk_cache = QSpinBox()
+        self.mk_cache.setRange(16, 4096)
+        self.mk_cache.setSuffix(" MB")
+        self.mk_cache.setValue(cfg.makemkv_cache_mb)
+        f.addRow("Cache di lettura", self.mk_cache)
+        tabs.addTab(mk, "MakeMKV")
 
         # --- Audio CD ----------------------------------------------------
         cd = QWidget()
@@ -170,8 +166,7 @@ class SettingsDialog(QDialog):
         f.setSpacing(14)
         self.tool_edits: dict[str, PathEdit] = {}
         for name, hint in (("cyanrip", "rip CD audio bit-perfect"),
-                           ("ffmpeg", "DVD → MKV, build full ≥ 7.0"),
-                           ("mkvmerge", "Blu-ray → MKV, MKVToolNix")):
+                           ("makemkvcon", "MakeMKV: DVD / Blu-ray → MKV")):
             found = find_tool(name, getattr(cfg, f"{name}_path"))
             edit = PathEdit(getattr(cfg, f"{name}_path"), False,
                             f"auto: {found}" if found else "non trovato")
@@ -187,6 +182,17 @@ class SettingsDialog(QDialog):
         row.addWidget(button("Salva", "primary", self._save))
         lay.addLayout(row)
         self._offset_job = None
+
+    def _fetch_beta_key(self) -> None:
+        try:
+            key = makemkv.fetch_beta_key()
+        except OSError as exc:
+            QMessageBox.warning(self, "MakeMKV", f"Forum MakeMKV non raggiungibile: {exc}")
+            return
+        if not key:
+            QMessageBox.warning(self, "MakeMKV", "Chiave beta non trovata sul forum MakeMKV.")
+            return
+        self.mk_key.setText(key)
 
     def _find_offset(self) -> None:
         cyan = find_tool("cyanrip", self.tool_edits["cyanrip"].text())
@@ -221,12 +227,15 @@ class SettingsDialog(QDialog):
         c.fullscreen = self.fullscreen.isChecked()
         for attr, combo in self.defaults.items():
             setattr(c, attr, combo.currentData())
-        c.min_main_title_minutes = self.min_title.value()
-        c.xreveal_process_names = self.xr_names.text()
-        c.xreveal_warn_if_not_running = self.xr_warn.isChecked()
-        c.xreveal_initial_delay_s = self.xr_delay.value()
-        c.xreveal_poll_interval_s = self.xr_poll.value()
-        c.xreveal_timeout_s = self.xr_timeout.value()
+        c.makemkv_auto_beta_key = self.mk_auto.isChecked()
+        c.makemkv_min_title_s = self.mk_min.value()
+        c.makemkv_cache_mb = self.mk_cache.value()
+        key = self.mk_key.text().strip()
+        if key and key != (makemkv.get_registered_key() or ""):
+            try:
+                makemkv.set_registered_key(key)
+            except OSError as exc:
+                QMessageBox.warning(self, "MakeMKV", f"Impossibile salvare la chiave: {exc}")
         if self.offset.value() != c.cd_drive_offset:
             c.cd_offset_configured = True
         c.cd_drive_offset = self.offset.value()

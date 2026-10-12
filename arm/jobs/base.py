@@ -115,6 +115,10 @@ class ProcessJob(Job):
             except ValueError:
                 pass
 
+    def format_log(self, line: str) -> str | None:
+        """Text shown in the log for an output line (None hides it)."""
+        return line
+
     def success_message(self) -> str:
         return f"Completato: {self.output_dir}"
 
@@ -161,8 +165,13 @@ class ProcessJob(Job):
             self.output_lines.append(line)
             if len(self.output_lines) > 2000:
                 del self.output_lines[:1000]
-            self.log.emit(line)
+            self._emit_log(line)
             self.parse_line(line)
+
+    def _emit_log(self, line: str) -> None:
+        text = self.format_log(line)
+        if text:
+            self.log.emit(text)
 
     def _on_error(self, error: QProcess.ProcessError) -> None:
         if error == QProcess.ProcessError.FailedToStart:
@@ -172,7 +181,7 @@ class ProcessJob(Job):
     def _on_finished(self, exit_code: int, _status) -> None:
         if self._buffer.strip():
             self.output_lines.append(self._buffer.strip())
-            self.log.emit(self._buffer.strip())
+            self._emit_log(self._buffer.strip())
             self.parse_line(self._buffer.strip())
             self._buffer = ""
         if self._done:

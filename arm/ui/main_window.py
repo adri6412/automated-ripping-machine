@@ -1,16 +1,17 @@
-"""Main window and state machine: idle → detect/wait XReveal → proposal → rip → done."""
+"""Main window and state machine: idle → detect/MakeMKV scan → proposal → rip → done."""
 from __future__ import annotations
 
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QDateTime, Qt, QTimer, QUrl
+from PySide6.QtCore import QDateTime, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QMainWindow, QMessageBox, QStackedWidget,
                                QVBoxLayout, QWidget)
 
-from ..core import processes, winapi
+from ..core import makemkv, processes, winapi
 from ..core.config import Config, app_dir
 from ..core.disc import DiscInfo, DiscType
 from ..core.monitor import DiscAnalyzer, DriveMonitor
@@ -23,6 +24,17 @@ def fmt_duration(seconds: float) -> str:
     seconds = int(seconds)
     return f"{seconds // 3600}h {seconds % 3600 // 60:02d}m" if seconds >= 3600 \
         else f"{seconds // 60}m {seconds % 60:02d}s"
+
+
+class KeyRefresher(QThread):
+    """Keeps the free MakeMKV beta key up to date (Windows registry)."""
+    done = Signal(str, bool)
+
+    def run(self) -> None:
+        try:
+            self.done.emit(makemkv.refresh_beta_key(), True)
+        except Exception as exc:  # noqa: BLE001 - offline, forum down, ...
+            self.done.emit(f"chiave non aggiornata ({exc.__class__.__name__})", False)
 
 
 class MainWindow(QMainWindow):
@@ -39,6 +51,9 @@ class MainWindow(QMainWindow):
         self.result_path: Path | None = None
         self.log_file = None
         self.last_ok = False
+        self.key_status = ""
+        self.key_style = "chipOk"
+        self.key_refresher: KeyRefresher | None = None
         self._old_threads: list = []
 
         root = QWidget()
@@ -59,7 +74,6 @@ class MainWindow(QMainWindow):
         for page in (self.idle, self.wait, self.proposal, self.run, self.done):
             self.stack.addWidget(page)
 
-        self.wait.skip.connect(self._skip_wait)
         self.wait.retry.connect(self._retry_detection)
         self.wait.eject.connect(self._eject)
         self.proposal.start.connect(self._start_process)
@@ -89,6 +103,8 @@ class MainWindow(QMainWindow):
 
         self._show_idle()
         self._refresh_environment()
+        if cfg.makemkv_auto_beta_key and sys.platform == "win32":
+            self.refresh_makemkv_key()
         self._tick()
 
     # ------------------------------------------------------------------ UI
@@ -101,8 +117,8 @@ class MainWindow(QMainWindow):
         lay.addSpacing(20)
         self.drive_chip = label("Ricerca lettore…", "chipWarn", wrap=False)
         lay.addWidget(self.drive_chip)
-        self.xreveal_chip = label("XReveal", "chipWarn", wrap=False)
-        lay.addWidget(self.xreveal_chip)
+        self.makemkv_chip = label("MakeMKV", "chipWarn", wrap=False)
+        lay.addWidget(self.makemkv_chip)
         lay.addStretch()
         self.clock = label("", "clock", wrap=False)
         lay.addWidget(self.clock)
@@ -135,26 +151,32 @@ class MainWindow(QMainWindow):
         self.cfg.save()
 
     # ----------------------------------------------------------- environment
-    def _xreveal_running(self) -> bool:
-        names = {n.strip().lower() for n in self.cfg.xreveal_process_names.split(",") if n.strip()}
-        running = winapi.running_process_names()
-        return any(n in running for n in names) or any(r.startswith("xreveal") for r in running)
-
     def _refresh_environment(self) -> None:
-        xr = self._xreveal_running()
-        if xr:
-            self._set_chip(self.xreveal_chip, "XReveal attivo", "chipOk")
-        elif self.cfg.xreveal_warn_if_not_running:
-            self._set_chip(self.xreveal_chip, "XReveal non in esecuzione", "chipErr")
+        if processes.tool_path("makemkvcon", self.cfg) is None:
+            self._set_chip(self.makemkv_chip, "MakeMKV non trovato", "chipErr")
+        elif self.key_status:
+            self._set_chip(self.makemkv_chip, f"MakeMKV · {self.key_status}", self.key_style)
         else:
-            self._set_chip(self.xreveal_chip, "XReveal ?", "chipWarn")
+            self._set_chip(self.makemkv_chip, "MakeMKV pronto", "chipOk")
         chips = []
-        for name, purpose in (("cyanrip", "CD"), ("mkvmerge", "Blu-ray MKV"), ("ffmpeg", "DVD MKV")):
+        for name, purpose in (("cyanrip", "CD audio"), ("makemkvcon", "DVD / Blu-ray")):
             ok = processes.tool_path(name, self.cfg) is not None
             chips.append((f"{'✔' if ok else '✘'} {name} · {purpose}", "chipOk" if ok else "chipErr"))
         if not self.cfg.cd_offset_configured:
             chips.append(("⚠ offset CD da configurare", "chipWarn"))
         self.idle.set_tools(chips)
+
+    def refresh_makemkv_key(self) -> None:
+        if self.key_refresher is not None and self.key_refresher.isRunning():
+            return
+        self.key_refresher = KeyRefresher()
+        self.key_refresher.done.connect(self._on_key_refreshed)
+        self.key_refresher.start()
+
+    def _on_key_refreshed(self, message: str, ok: bool) -> None:
+        self.key_status = "" if ok else message
+        self.key_style = "chipOk" if ok else "chipWarn"
+        self._refresh_environment()
 
     def _on_drives(self, drives: list) -> None:
         self.drive = self.monitor.current_drive()
@@ -183,7 +205,7 @@ class MainWindow(QMainWindow):
         if self._busy():
             return
         self.drive = drive
-        self._start_analysis(skip_wait=False)
+        self._start_analysis()
 
     def _on_removed(self, _drive: str) -> None:
         if self._busy():
@@ -192,21 +214,19 @@ class MainWindow(QMainWindow):
         if self.stack.currentWidget() in (self.wait, self.proposal):
             self._show_idle()
 
-    def _start_analysis(self, skip_wait: bool) -> None:
+    def _start_analysis(self) -> None:
         self._stop_analyzer()
-        self.wait.set_mode(timed_out=False)
+        self.wait.set_mode(error=False)
         self.wait.disc.set_kind("unknown")
         self.wait.type_badge.setText("Rilevamento…")
         self.wait.title.setText("Lettura del disco…")
         self.wait.message.setText(f"Unità {self.drive}")
         self.wait.elapsed.setText("")
-        self.wait.skip_btn.setVisible(False)
         self.stack.setCurrentWidget(self.wait)
-        an = DiscAnalyzer(self.drive, self.cfg, skip_wait=skip_wait)
+        an = DiscAnalyzer(self.drive, self.cfg)
         an.identified.connect(self._on_identified)
         an.waiting.connect(self._on_waiting)
         an.ready.connect(self._on_ready)
-        an.timed_out.connect(self._on_timeout)
         an.failed.connect(self._on_analysis_failed)
         self.analyzer = an
         an.start()
@@ -215,7 +235,7 @@ class MainWindow(QMainWindow):
         if self.analyzer is not None:
             self.analyzer.cancel()
             for sig in (self.analyzer.identified, self.analyzer.waiting, self.analyzer.ready,
-                        self.analyzer.timed_out, self.analyzer.failed):
+                        self.analyzer.failed):
                 try:
                     sig.disconnect()
                 except (RuntimeError, TypeError):
@@ -233,47 +253,28 @@ class MainWindow(QMainWindow):
         self.wait.type_badge.setText(info.type.label)
         self.wait.title.setText(info.title or info.type.label)
         if info.type.is_video:
-            self.wait.skip_btn.setVisible(True)
-            if not self._xreveal_running() and self.cfg.xreveal_warn_if_not_running:
-                self.wait.message.setText("⚠ XReveal non risulta in esecuzione: il disco non "
-                                          "verrà decifrato finché non lo avvii.")
+            self.wait.message.setText("Analisi dei titoli con MakeMKV (solo lettura, può richiedere "
+                                      "fino a un paio di minuti)…")
 
     def _on_waiting(self, message: str, elapsed: float) -> None:
-        if "XReveal non risulta" in self.wait.message.text() and not self._xreveal_running():
-            self.wait.elapsed.setText(message)
-        else:
-            self.wait.message.setText(message)
-            if elapsed:
-                self.wait.elapsed.setText(f"In attesa da {human_time(elapsed)} "
-                                          f"(timeout {human_time(self.cfg.xreveal_timeout_s)})")
-
-    def _on_timeout(self, info: DiscInfo, message: str) -> None:
-        self.info = info
-        self.wait.set_mode(timed_out=True)
-        self.wait.title.setText("Il disco non risulta decifrato")
-        self.wait.message.setText(f"{message}\nControlla XReveal (licenza/chiavi aggiornate) "
-                                  "oppure procedi comunque.")
-        self.wait.elapsed.setText("")
+        self.wait.message.setText(message)
+        if elapsed:
+            self.wait.elapsed.setText(f"Analisi in corso da {human_time(elapsed)}")
 
     def _on_analysis_failed(self, message: str) -> None:
-        self.wait.set_mode(timed_out=True)
+        self.wait.set_mode(error=True)
         self.wait.title.setText("Errore di lettura")
         self.wait.message.setText(message)
-
-    def _skip_wait(self) -> None:
-        if self.analyzer is not None and self.analyzer.isRunning():
-            self.analyzer.force = True
-        else:
-            self._start_analysis(skip_wait=True)
+        self.wait.elapsed.setText("")
 
     def _retry_detection(self) -> None:
-        self._start_analysis(skip_wait=False)
+        self._start_analysis()
 
     # --------------------------------------------------------------- proposal
     def _on_ready(self, info: DiscInfo) -> None:
         self.info = info
         if info.type == DiscType.UNKNOWN:
-            self.wait.set_mode(timed_out=True)
+            self.wait.set_mode(error=True)
             self.wait.title.setText("Disco non riconosciuto")
             self.wait.message.setText("Il disco è vuoto o illeggibile.")
             return
@@ -300,10 +301,9 @@ class MainWindow(QMainWindow):
                        else "Nessun processo disponibile: controlla i programmi nelle impostazioni.")
 
     def _process_possible(self, proc, info: DiscInfo) -> bool:
-        if proc.id == "bd_mkv_main":
-            return bool(info.details.get("main_playlist"))
-        if proc.id == "dvd_mkv_main":
-            return bool(info.details.get("main_title"))
+        if proc.id in ("mkv_main", "mkv_all", "bd_backup"):
+            return info.details.get("makemkv_index") is not None and (
+                proc.id != "mkv_main" or info.details.get("main_title_id") is not None)
         return True
 
     def _describe(self, info: DiscInfo) -> str:
@@ -313,13 +313,14 @@ class MainWindow(QMainWindow):
         if info.type == DiscType.AUDIO_CD:
             lines.append(f"{info.audio_tracks} tracce audio")
         if info.details.get("main_duration"):
-            what = "Playlist" if "main_playlist" in info.details else "Titolo"
-            ident = Path(info.details["main_playlist"]).name if "main_playlist" in info.details \
-                else info.details.get("main_title")
-            lines.append(f"Film principale: {fmt_duration(info.details['main_duration'])} "
-                         f"({what} {ident}, {info.details.get('main_chapters', 0)} capitoli)")
+            source = info.details.get("main_source")
+            lines.append(f"Film principale: {fmt_duration(info.details['main_duration'])}, "
+                         f"{info.details.get('main_chapters', 0)} capitoli"
+                         + (f" ({source})" if source else ""))
         if info.details.get("main_size"):
             lines.append(f"Dimensione film: {human_size(info.details['main_size'])}")
+        if info.details.get("titles"):
+            lines.append(f"Titoli trovati da MakeMKV: {info.details['titles']}")
         if info.total_size:
             lines.append(f"Contenuto disco: {human_size(info.total_size)}")
         lines.append(f"Unità {info.drive}")
@@ -456,4 +457,6 @@ class MainWindow(QMainWindow):
             return
         self._stop_analyzer()
         self.monitor.stop()
+        if self.key_refresher is not None:
+            self.key_refresher.wait(3000)
         event.accept()

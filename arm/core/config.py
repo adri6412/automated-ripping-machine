@@ -41,26 +41,22 @@ class Config:
 
     # External tools (empty = auto-detect)
     cyanrip_path: str = ""
-    ffmpeg_path: str = ""
-    mkvmerge_path: str = ""
+    makemkvcon_path: str = ""
 
-    # XReveal
-    xreveal_process_names: str = "xreveal.exe,xreveal64.exe,xrevealtray.exe"
-    xreveal_warn_if_not_running: bool = True
-    xreveal_initial_delay_s: int = 5
-    xreveal_timeout_s: int = 600
-    xreveal_poll_interval_s: int = 3
+    # MakeMKV (decrypts and rips DVD / Blu-ray / UHD)
+    makemkv_auto_beta_key: bool = True     # keep the free beta key up to date
+    makemkv_min_title_s: int = 120         # shorter titles are ignored (menus, trailers)
+    makemkv_cache_mb: int = 1024
 
     # Default process per disc type (ids from arm.core.processes)
-    default_bluray: str = "bd_mkv_main"
-    default_uhd: str = "bd_backup"
-    default_dvd: str = "dvd_mkv_main"
+    default_bluray: str = "mkv_main"
+    default_uhd: str = "mkv_main"
+    default_dvd: str = "mkv_main"
     default_audio: str = "cd_flac"
     default_data: str = "data_copy"
 
     # Nothing starts on its own: rips begin only when the user presses "Avvia".
     eject_when_done: bool = False
-    min_main_title_minutes: int = 20
 
     # Audio CD
     cd_drive_offset: int = 0
@@ -108,30 +104,35 @@ class Config:
 # Tool discovery
 _TOOL_HINTS = {
     "cyanrip": [r"C:\Program Files\cyanrip\cyanrip.exe", r"C:\cyanrip\cyanrip.exe"],
-    "ffmpeg": [r"C:\Program Files\ffmpeg\bin\ffmpeg.exe", r"C:\ffmpeg\bin\ffmpeg.exe"],
-    "mkvmerge": [r"C:\Program Files\MKVToolNix\mkvmerge.exe",
-                 r"C:\Program Files (x86)\MKVToolNix\mkvmerge.exe"],
+    "makemkvcon": [r"C:\Program Files (x86)\MakeMKV\makemkvcon64.exe",
+                   r"C:\Program Files\MakeMKV\makemkvcon64.exe",
+                   r"C:\Program Files (x86)\MakeMKV\makemkvcon.exe",
+                   r"C:\Program Files\MakeMKV\makemkvcon.exe"],
 }
+# Executable names to look for (MakeMKV ships a 64-bit "makemkvcon64").
+_TOOL_NAMES = {"makemkvcon": ["makemkvcon64", "makemkvcon"]}
 
 
 def find_tool(name: str, configured: str = "") -> str | None:
     """Locate an executable: explicit path, ./tools folder, PATH, usual locations."""
     if configured and Path(configured).is_file():
         return configured
-    exe = name + (".exe" if sys.platform == "win32" else "")
+    suffix = ".exe" if sys.platform == "win32" else ""
     tools = install_dir() / "tools"
-    for candidate in (tools / exe, tools / name / exe):
-        if candidate.is_file():
-            return str(candidate)
-    # Tools unpacked by the installer keep their archive layout
-    # (e.g. tools/ffmpeg/ffmpeg-n7.1-…/bin/ffmpeg.exe).
-    if tools.is_dir():
-        for candidate in sorted(tools.glob(f"*/**/{exe}")):
+    for base in _TOOL_NAMES.get(name, [name]):
+        exe = base + suffix
+        for candidate in (tools / exe, tools / name / exe):
             if candidate.is_file():
                 return str(candidate)
-    found = shutil.which(name)
-    if found:
-        return found
+        # Tools unpacked by the installer keep their archive layout
+        # (e.g. tools/cyanrip/…/cyanrip.exe).
+        if tools.is_dir():
+            for candidate in sorted(tools.glob(f"*/**/{exe}")):
+                if candidate.is_file():
+                    return str(candidate)
+        found = shutil.which(base)
+        if found:
+            return found
     for hint in _TOOL_HINTS.get(name, []):
         if Path(hint).is_file():
             return hint

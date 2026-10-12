@@ -32,6 +32,7 @@ def process_events(ms: int) -> None:
     loop.exec()
 
 
+@unittest.skipIf(sys.platform == "win32", "uses a POSIX shebang fake makemkvcon")
 class ManualStartTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -56,7 +57,7 @@ class ManualStartTests(unittest.TestCase):
 
         cfg = Config.load()
         cfg.video_output_dir = str(self.out)
-        cfg.xreveal_initial_delay_s = 0
+        cfg.makemkvcon_path = fixtures.fake_makemkvcon(Path(self.tmp.name))
         window = MainWindow(cfg)
         try:
             self.assertTrue(wait_until(lambda: window.stack.currentWidget() is window.proposal))
@@ -73,7 +74,7 @@ class ManualStartTests(unittest.TestCase):
             window.proposal.start_btn.click()
             self.assertTrue(wait_until(lambda: window.stack.currentWidget() is window.done))
             self.assertTrue(window.last_ok)
-            self.assertTrue(any(self.out.rglob("*.m2ts")))
+            self.assertTrue(any(self.out.rglob("index.bdmv")))
         finally:
             window.monitor.stop()
             window._stop_analyzer()

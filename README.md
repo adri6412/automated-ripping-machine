@@ -6,35 +6,52 @@ senza un comando dell'utente**.
 
 1. **Inserisci il disco**: l'app lo rileva da sola (polling del lettore ottico).
 2. **Riconosce il tipo di disco**: Blu-ray, Blu-ray 4K UHD, DVD Video, CD Audio o disco dati.
-3. **Attende XReveal**: per i dischi video aspetta che XReveal abbia finito di
-   decifrare, verificando il contenuto vero e proprio invece di affidarsi a un ritardo fisso.
+3. **Analizza i dischi video con MakeMKV** (`makemkvcon info`, sola lettura): elenca i titoli
+   e individua il film principale.
 4. **Propone il processo corretto** (preselezionato): il rip parte **solo quando premi Avvia**,
    dopo aver eventualmente scelto un altro processo.
 5. **Esegue il rip**, mostra avanzamento e log. Al termine il disco resta nel lettore finché non premi
    **Espelli** (l'espulsione automatica si può attivare nelle impostazioni).
 
-| Attesa disco | Attesa XReveal | Proposta del processo |
+| Attesa disco | Analisi MakeMKV | Proposta del processo |
 |---|---|---|
-| ![idle](docs/idle.png) | ![xreveal](docs/xreveal-wait.png) | ![proposta](docs/proposal.png) |
+| ![idle](docs/idle.png) | ![analisi](docs/makemkv-scan.png) | ![proposta](docs/proposal.png) |
 
-<sub>Screenshot generati in modalità simulazione (`ARM_SIM_DRIVE`).</sub>
+<sub>Screenshot generati in modalità simulazione (`ARM_SIM_DRIVE` e un `makemkvcon` finto).</sub>
 
 ## Processi disponibili
 
 | Disco | Processo | Strumento | Note |
 |---|---|---|---|
-| Blu-ray / UHD | **Film principale → MKV** | `mkvmerge` (MKVToolNix) | Remux senza perdita della playlist principale: tutte le tracce audio, sottotitoli e capitoli |
-| Blu-ray / UHD | **Backup completo 1:1** | interno | Copia integrale decifrata (BDMV, CERTIFICATE, menu, extra) |
-| DVD Video | **Film principale → MKV** | `ffmpeg` ≥ 7 (demuxer `dvdvideo`) | Remux senza perdita del titolo principale con capitoli |
-| DVD Video | **Backup completo 1:1** | interno | Copia integrale della cartella VIDEO_TS |
+| DVD / Blu-ray / UHD | **Film principale → MKV** | MakeMKV (`makemkvcon mkv`) | Decifra il disco e salva il titolo principale senza perdita: video, tutte le tracce audio, sottotitoli e capitoli |
+| DVD / Blu-ray / UHD | **Tutti i titoli → MKV** | MakeMKV (`makemkvcon mkv … all`) | Tutti i titoli più lunghi della durata minima (extra, episodi) |
+| Blu-ray / UHD | **Backup decifrato 1:1** | MakeMKV (`makemkvcon backup --decrypt`) | Copia integrale decifrata (BDMV, menu, extra) |
 | CD Audio | **Rip bit-perfect FLAC** | `cyanrip` | cd-paranoia, offset di lettura, verifica **AccurateRip**, CUE + log con checksum, metadati MusicBrainz e copertina |
 | CD Audio | **Rip bit-perfect WAV** | `cyanrip` | Come sopra ma WAV non compresso |
 | Dati | **Copia dei file** | interno | Copia con verifica delle dimensioni |
 
 Il processo predefinito per ogni tipo di disco si sceglie nelle impostazioni.
-Il film principale viene individuato automaticamente: per i Blu-ray si analizzano
-le playlist `.mpls` (scartando le playlist "esca" con clip ripetute usate come
-protezione), per i DVD si leggono gli IFO e si sceglie il titolo più lungo.
+Il film principale è il titolo più lungo trovato da MakeMKV (a parità di durata vince
+quello più grande, così le playlist "esca" dei Blu-ray protetti vengono scartate). Il file
+del film principale viene rinominato con il titolo del disco.
+
+## MakeMKV
+
+[MakeMKV](https://www.makemkv.com/) legge e decifra da solo DVD (CSS), Blu-ray e 4K UHD
+(AACS, BD+); l'app usa la sua versione a riga di comando `makemkvcon` in modalità
+*robot* (`-r`), da cui ricava titoli, avanzamento e messaggi.
+
+* **Chiave:** senza una licenza acquistata MakeMKV funziona con la **chiave beta gratuita**
+  che lo sviluppatore pubblica (e rinnova ogni mese) sul
+  [forum ufficiale](https://forum.makemkv.com/forum/viewtopic.php?t=1053). L'installer la
+  imposta e l'app la **aggiorna da sola all'avvio** (disattivabile); se hai una licenza
+  acquistata non viene mai toccata. In *Impostazioni → MakeMKV* puoi inserire la tua chiave o
+  scaricare quella beta con un clic. La chiave si trova in `HKCU\Software\MakeMKV\app_Key`.
+* Se la chiave è scaduta o la versione di MakeMKV è troppo vecchia, l'app lo segnala con un
+  messaggio chiaro (aggiorna con "Aggiorna programmi esterni").
+* **Durata minima dei titoli** (predefinita 120 s) e **cache di lettura** sono configurabili.
+* Per i 4K UHD serve un lettore compatibile ("UHD friendly"): vedi la
+  [lista sul forum MakeMKV](https://forum.makemkv.com/forum/viewforum.php?f=16).
 
 ### Perché cyanrip per i CD
 
@@ -49,39 +66,17 @@ con checksum. Essendo CLI si integra direttamente nell'app.
 > [accuraterip.com/driveoffsets.htm](http://www.accuraterip.com/driveoffsets.htm)
 > oppure usare il pulsante **Rileva offset** con un CD presente nel database AccurateRip.
 
-## Come viene gestito XReveal
-
-XReveal lavora in background a livello di driver: appena il disco viene inserito
-lo analizza e poi lo rende leggibile in chiaro a tutte le applicazioni.
-L'app quindi **non lancia XReveal** ma:
-
-* controlla che il processo XReveal sia in esecuzione (indicatore in alto e avviso);
-* dopo un'attesa iniziale, **legge campioni reali del disco** a intervalli regolari:
-  * **DVD (CSS):** legge settori sparsi del VOB principale e controlla il campo
-    `PES_scrambling_control` dei pacchetti MPEG-2 (diverso da zero = ancora cifrato;
-    un errore di lettura = disco non ancora sbloccato);
-  * **Blu-ray (AACS):** legge blocchi da 6144 byte del `.m2ts` più grande e verifica che
-    ogni pacchetto da 192 byte contenga il sync byte `0x47` (in un blocco cifrato solo i
-    primi 16 byte sono in chiaro);
-* procede appena i dati risultano decifrati; se si supera il timeout mostra
-  **Procedi comunque / Riprova / Espelli**. Puoi anche premere **Procedi senza attendere**.
-
-Attesa iniziale, intervallo di controllo, timeout e nomi del processo XReveal sono configurabili.
-
 ## Requisiti
 
 * Windows 10/11 x64
-* [XReveal](https://www.videohelp.com/software/Xreveal) installato e in esecuzione
-  (l'installer lo scarica e installa per te)
 * Python 3.10+ (solo se usi i sorgenti invece dell'installer)
 * Strumenti esterni (l'installer li scarica da solo; a mano basta installare quelli dei processi che usi):
-  * **cyanrip** – [release Windows](https://github.com/cyanreg/cyanrip/releases)
-  * **MKVToolNix** (mkvmerge) – [mkvtoolnix.download](https://mkvtoolnix.download/)
-  * **ffmpeg** ≥ 7.0 con libdvdnav/libdvdread (build GPL di BtbN o "full" di gyan.dev)
+  * **MakeMKV** – [makemkv.com](https://www.makemkv.com/download/) (DVD, Blu-ray, UHD)
+  * **cyanrip** – [release Windows](https://github.com/cyanreg/cyanrip/releases) (CD audio)
 
 Gli eseguibili vengono cercati in quest'ordine: percorso indicato nelle impostazioni,
 cartella `tools\` accanto al programma (anche nelle sottocartelle create dall'installer), `PATH`, cartelle di installazione standard
-(`C:\Program Files\MKVToolNix\…`). La schermata iniziale mostra quali strumenti sono stati trovati.
+(`C:\Program Files (x86)\MakeMKV\makemkvcon64.exe`, …). La schermata iniziale mostra quali strumenti sono stati trovati.
 
 ## Installazione e avvio
 
@@ -97,16 +92,14 @@ L'installer:
 
   | Programma | Fonte | Dove finisce |
   |---|---|---|
+  | MakeMKV + chiave beta | winget (`GuinpinSoft.MakeMKV`) o installer ufficiale da makemkv.com; chiave dal forum ufficiale | installazione di sistema |
   | cyanrip | release ufficiali GitHub `cyanreg/cyanrip` | `<app>\tools\cyanrip\` |
-  | ffmpeg (build GPL con libdvdnav) | `BtbN/FFmpeg-Builds`, ultimo ramo stabile | `<app>\tools\ffmpeg\` |
-  | MKVToolNix | zip portable da mkvtoolnix.download | `<app>\tools\mkvtoolnix\` |
-  | XReveal | winget (`XrevealTeam.Xreveal`) o installer ufficiale da xreveal.com | installazione di sistema |
 
 * crea i collegamenti nel menu Start, compreso **"Aggiorna programmi esterni"**, che riscarica
   le ultime versioni (stesso script: `installer\install-deps.ps1`);
 * opzionalmente avvia l'app all'accesso a Windows.
 
-La disinstallazione rimuove anche la cartella `tools`; XReveal resta installato e si
+La disinstallazione rimuove anche la cartella `tools`; MakeMKV resta installato e si
 rimuove dalle impostazioni di Windows. Se un download non riesce, l'installer completa
 comunque l'installazione e mostra il riepilogo: puoi riprovare con "Aggiorna programmi esterni".
 
@@ -119,7 +112,7 @@ start.bat
 ```
 
 `start.bat` crea un ambiente virtuale, installa PySide6 e avvia l'app senza finestra console.
-I programmi esterni si possono scaricare con lo stesso script dell'installer:
+MakeMKV (con la chiave beta) e cyanrip si possono installare con lo stesso script dell'installer:
 
 ```bat
 powershell -ExecutionPolicy Bypass -File installer\install-deps.ps1 -InstallDir .
@@ -166,13 +159,12 @@ arm/
   core/
     winapi.py      unità ottiche via Win32 (presenza disco, TOC, etichetta, espulsione)
     disc.py        riconoscimento del tipo di disco
-    decryption.py  verifica della decifratura XReveal (CSS / AACS)
-    bluray.py      parser MPLS e scelta playlist principale
-    dvd.py         parser IFO e scelta titolo principale
+    makemkv.py     makemkvcon: output robot, lettori, titoli, chiave beta
+    bluray.py      titolo del disco e riconoscimento UHD
     processes.py   catalogo processi e proposta automatica
-    monitor.py     thread di polling del lettore e di analisi/attesa
+    monitor.py     thread di polling del lettore e di analisi del disco
     config.py      configurazione JSON e ricerca degli strumenti
-  jobs/            job di rip (copia 1:1, mkvmerge, ffmpeg, cyanrip)
+  jobs/            job di rip (MakeMKV, cyanrip, copia file)
   ui/              interfaccia fullscreen (pagine, stile, impostazioni)
 tests/             test unitari con dischi sintetici
 ```
@@ -180,7 +172,7 @@ tests/             test unitari con dischi sintetici
 ## Sviluppo e test
 
 I test non richiedono Windows né un lettore: usano strutture di disco sintetiche
-(MPLS, IFO, settori VOB e unità AACS cifrate/in chiaro) e strumenti finti.
+e versioni finte di `makemkvcon` e `cyanrip` che producono lo stesso output dei programmi veri.
 
 ```bash
 pip install -r requirements.txt
@@ -193,8 +185,11 @@ Per provare l'interfaccia senza lettore, simula un disco con una cartella:
 ARM_SIM_DRIVE=/percorso/cartella_disco python -m arm --windowed
 # cartella con BDMV/ o VIDEO_TS/  -> disco video
 # file .audiocd contenente il numero di tracce -> CD audio
-# ARM_SIM_DECRYPTED=0 simula un disco non ancora decifrato
 ```
+
+Per i dischi video serve anche un `makemkvcon`: su Linux/macOS puoi usare quello finto dei test
+(`tests/fixtures.py`, funzione `fake_makemkvcon`) indicandone il percorso in
+*Impostazioni → Programmi*.
 
 ## Note legali
 

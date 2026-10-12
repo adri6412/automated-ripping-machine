@@ -8,7 +8,6 @@ fake drive can be simulated with the ``ARM_SIM_DRIVE`` environment variable
 from __future__ import annotations
 
 import ctypes
-import os
 import string
 import sys
 from dataclasses import dataclass
@@ -192,27 +191,3 @@ def close_tray(drive: str) -> bool:
         return _ioctl(handle, IOCTL_STORAGE_LOAD_MEDIA)
     finally:
         _k32.CloseHandle(handle)
-
-
-def running_process_names() -> set[str]:
-    """Lower-case names of running processes (used to check XReveal is alive)."""
-    names: set[str] = set()
-    if IS_WINDOWS:
-        import subprocess
-        try:
-            out = subprocess.run(["tasklist", "/fo", "csv", "/nh"], capture_output=True,
-                                 text=True, timeout=10,
-                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
-        except (OSError, subprocess.SubprocessError):
-            return names
-        for line in out.splitlines():
-            if line.startswith('"'):
-                names.add(line.split('","', 1)[0].strip('"').lower())
-    else:
-        for pid in os.listdir("/proc") if os.path.isdir("/proc") else []:
-            try:
-                with open(f"/proc/{pid}/comm") as fh:
-                    names.add(fh.read().strip().lower())
-            except OSError:
-                pass
-    return names

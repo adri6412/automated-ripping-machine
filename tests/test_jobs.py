@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from arm.jobs.cd_job import CyanripJob  # noqa: E402
 from arm.jobs.copy_job import CopyJob  # noqa: E402
-from arm.jobs.video_jobs import BlurayMkvJob  # noqa: E402
+from arm.jobs.makemkv_job import MakeMKVJob  # noqa: E402
 from tests import fixtures  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
@@ -93,21 +93,40 @@ sys.exit(1)
             self.assertFalse(res["ok"])
             self.assertEqual(job.attempt, 0)
 
-    def test_mkvmerge_job(self):
+    def test_makemkv_main_title_is_renamed(self):
+        with TemporaryDirectory() as tools, TemporaryDirectory() as out:
+            exe = fixtures.fake_makemkvcon(Path(tools))
+            job = MakeMKVJob(exe, 0, Path(out) / "Movie", mode="title", title_id=0,
+                             rename_to="Test Movie")
+            logs = []
+            job.log.connect(logs.append)
+            res = run_job(job)
+            self.assertTrue(res["ok"], res)
+            self.assertEqual([p.name for p in job.result_files], ["Test Movie.mkv"])
+            self.assertAlmostEqual(max(res["progress"]), 100.0)
+            self.assertIn("Copy complete. 1 titles saved.", logs)
+            self.assertFalse(any(line.startswith("PRGV") for line in logs))
+
+    def test_makemkv_all_titles_and_backup(self):
+        with TemporaryDirectory() as tools, TemporaryDirectory() as out:
+            exe = fixtures.fake_makemkvcon(Path(tools))
+            job = MakeMKVJob(exe, 0, Path(out) / "all", mode="all", min_length_s=120)
+            self.assertTrue(run_job(job)["ok"])
+            self.assertEqual(len(job.result_files), 3)
+            backup = MakeMKVJob(exe, 0, Path(out) / "bk", mode="backup")
+            self.assertTrue(run_job(backup)["ok"])
+            self.assertTrue((Path(out) / "bk" / "BDMV" / "index.bdmv").is_file())
+
+    def test_makemkv_expired_key_fails(self):
         script = r'''
-out = sys.argv[sys.argv.index("-o") + 1]
-for p in (0, 50, 100):
-    print(f"#GUI#progress {p}%")
-open(out, "wb").write(b"mkv")
-sys.exit(1)  # warnings only
+print('MSG:5021,0,0,"This application version is too old. Please download the latest version.","x"')
+sys.exit(0)
 '''
         with TemporaryDirectory() as tools, TemporaryDirectory() as out:
-            exe = fake_tool(Path(tools), "mkvmerge", script)
-            target = Path(out) / "Movie" / "Movie.mkv"
-            res = run_job(BlurayMkvJob(exe, Path("/x/00800.mpls"), target, "Movie"))
-            self.assertTrue(res["ok"], res)
-            self.assertTrue(target.is_file())
-            self.assertEqual(res["progress"], [0.0, 50.0, 100.0])
+            exe = fake_tool(Path(tools), "makemkvcon", script)
+            res = run_job(MakeMKVJob(exe, 0, Path(out), mode="title", title_id=0))
+            self.assertFalse(res["ok"])
+            self.assertIn("chiave", res["msg"].lower())
 
 
 if __name__ == "__main__":

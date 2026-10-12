@@ -49,7 +49,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist/AutoRipMachine/tools | Out-Null
           Copy-Item README.md, LICENSE dist/AutoRipMachine/
-          Set-Content dist/AutoRipMachine/tools/LEGGIMI.txt "Copia qui cyanrip.exe, ffmpeg.exe e mkvmerge.exe per un pacchetto autonomo (oppure usa l'installer, che li scarica da solo)."
+          Set-Content dist/AutoRipMachine/tools/LEGGIMI.txt "Copia qui cyanrip.exe per un pacchetto autonomo; MakeMKV va installato a parte (oppure usa l'installer, che scarica entrambi)."
           $zip = "dist/AutoRipMachine-${{ steps.version.outputs.version }}-win64.zip"
           Compress-Archive -Path dist/AutoRipMachine -DestinationPath $zip
           Remove-Item dist/AutoRipMachine/tools -Recurse -Force
@@ -72,10 +72,18 @@ jobs:
         shell: pwsh
         run: |
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File installer\install-deps.ps1 `
-            -InstallDir $env:GITHUB_WORKSPACE -Cyanrip -FFmpeg -MKVToolNix -NoPause
+            -InstallDir $env:GITHUB_WORKSPACE -Cyanrip -MakeMKV -NoPause
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -c "from arm.core.config import find_tool; paths = {n: find_tool(n) for n in ('cyanrip', 'ffmpeg', 'mkvmerge')}; print(paths); assert all(paths.values())"
-          & (python -c "from arm.core.config import find_tool; print(find_tool('mkvmerge'))") --version
+          python -c "from arm.core.config import find_tool; paths = {n: find_tool(n) for n in ('cyanrip', 'makemkvcon')}; print(paths); assert all(paths.values())"
+
+      # Informational: makemkvcon starts and reports no drives on the runner.
+      - name: Smoke test makemkvcon
+        continue-on-error: true
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          python -c "from arm.core import makemkv; k = makemkv.get_registered_key(); print('chiave:', (k or 'nessuna')[:6])"
+          python -c "from arm.core import makemkv; from arm.core.config import find_tool; print(makemkv.list_drives(find_tool('makemkvcon')))"
 
       # Best effort: an exhausted artifact storage quota must not block the release upload.
       - name: Upload build artifacts

@@ -101,8 +101,7 @@ class IdlePage(QWidget):
 
 # ----------------------------------------------------------------------
 class WaitPage(QWidget):
-    """Disc detected: identification and XReveal decryption wait."""
-    skip = Signal()
+    """Disc detected: identification and MakeMKV title scan."""
     retry = Signal()
     eject = Signal()
 
@@ -132,21 +131,19 @@ class WaitPage(QWidget):
         lay.addSpacing(30)
         row = QHBoxLayout()
         row.addStretch()
-        self.skip_btn = button("Procedi senza attendere", "", self.skip.emit)
         self.retry_btn = button("Riprova", "", self.retry.emit)
         self.eject_btn = button("⏏  Espelli", "danger", self.eject.emit)
-        for b in (self.skip_btn, self.retry_btn, self.eject_btn):
+        for b in (self.retry_btn, self.eject_btn):
             row.addWidget(b)
         row.addStretch()
         lay.addLayout(row)
         lay.addStretch()
         self.bar.setMinimumWidth(500)
 
-    def set_mode(self, timed_out: bool) -> None:
-        self.retry_btn.setVisible(timed_out)
-        self.skip_btn.setText("Procedi comunque" if timed_out else "Procedi senza attendere")
-        self.bar.setVisible(not timed_out)
-        self.disc.set_spinning(not timed_out)
+    def set_mode(self, error: bool) -> None:
+        self.retry_btn.setVisible(error)
+        self.bar.setVisible(not error)
+        self.disc.set_spinning(not error)
 
 
 # ----------------------------------------------------------------------

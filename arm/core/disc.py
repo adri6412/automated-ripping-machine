@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
-from . import bluray, dvd, winapi
+from . import bluray, winapi
 
 
 class DiscType(str, Enum):
@@ -127,8 +127,8 @@ def _sim_audio_tracks(root: Path) -> int:
 def identify(drive: str) -> DiscInfo:
     """Classify the disc currently in ``drive``.
 
-    Detection only uses metadata that is readable *before* decryption
-    (filesystem layout, TOC), so it is safe to run while XReveal is still busy.
+    Detection only uses metadata that is readable without decryption
+    (filesystem layout, TOC); MakeMKV takes care of the protected content.
     """
     root = drive_root(drive)
     label = winapi.volume_label(drive) if not os.environ.get("ARM_SIM_DRIVE") else root.name
@@ -170,24 +170,3 @@ def identify(drive: str) -> DiscInfo:
     if info.type in (DiscType.DATA, DiscType.DVD_VIDEO, DiscType.BLURAY, DiscType.UHD_BLURAY):
         info.total_size = dir_size(root)
     return info
-
-
-def analyze_video(info: DiscInfo, min_main_seconds: float) -> None:
-    """Fill ``info.details`` with main title data. Needs a decrypted disc for BD sizes."""
-    if info.type in (DiscType.BLURAY, DiscType.UHD_BLURAY):
-        playlists = bluray.scan_playlists(info.root)
-        main = bluray.pick_main_playlist(playlists, min_main_seconds)
-        info.details["playlists"] = len(playlists)
-        if main:
-            info.details.update(main_playlist=str(main.path), main_duration=main.duration,
-                                main_chapters=main.chapters, main_size=main.size)
-    elif info.type == DiscType.DVD_VIDEO:
-        try:
-            titles = dvd.scan_titles(info.root)
-        except Exception:  # noqa: BLE001 - corrupt IFOs must not crash detection
-            titles = []
-        main = dvd.pick_main_title(titles)
-        info.details["titles"] = len(titles)
-        if main:
-            info.details.update(main_title=main.number, main_duration=main.duration,
-                                main_chapters=main.chapters)

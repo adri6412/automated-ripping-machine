@@ -44,10 +44,8 @@ Name: "custom"; Description: "Personalizzata"; Flags: iscustom
 [Components]
 Name: "app"; Description: "Automated Ripping Machine"; Types: full compact custom; Flags: fixed
 Name: "deps"; Description: "Programmi esterni (scaricati da Internet durante l'installazione)"; Types: full
+Name: "deps\makemkv"; Description: "MakeMKV - decifra e rippa DVD, Blu-ray e 4K UHD (+ chiave beta)"; Types: full
 Name: "deps\cyanrip"; Description: "cyanrip - rip bit-perfect dei CD audio"; Types: full
-Name: "deps\ffmpeg"; Description: "ffmpeg (build GPL con libdvdnav) - DVD in MKV"; Types: full
-Name: "deps\mkvtoolnix"; Description: "MKVToolNix - Blu-ray in MKV"; Types: full
-Name: "deps\xreveal"; Description: "XReveal - decifratura di DVD e Blu-ray"; Types: full
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
@@ -61,7 +59,7 @@ Source: "install-deps.ps1"; DestDir: "{app}\setup"; Flags: ignoreversion
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"
 Name: "{group}\Aggiorna programmi esterni"; Filename: "{#PowerShell}"; \
   Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{#DepsScript}"" -InstallDir ""{app}"""; \
-  Comment: "Scarica le ultime versioni di cyanrip, ffmpeg, MKVToolNix e XReveal"
+  Comment: "Scarica le ultime versioni di MakeMKV (e della chiave beta) e di cyanrip"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; Tasks: desktopicon
 Name: "{autostartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; Tasks: autostart
@@ -75,7 +73,7 @@ Filename: "{app}\{#MyAppExe}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; \
   Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
-; Programs downloaded by install-deps.ps1 (XReveal has its own uninstaller).
+; Programs downloaded by install-deps.ps1 (MakeMKV has its own uninstaller).
 Type: filesandordirs; Name: "{app}\tools"
 
 [Code]
@@ -83,9 +81,7 @@ function DepSwitches(Param: String): String;
 begin
   Result := '';
   if WizardIsComponentSelected('deps\cyanrip') then Result := Result + ' -Cyanrip';
-  if WizardIsComponentSelected('deps\ffmpeg') then Result := Result + ' -FFmpeg';
-  if WizardIsComponentSelected('deps\mkvtoolnix') then Result := Result + ' -MKVToolNix';
-  if WizardIsComponentSelected('deps\xreveal') then Result := Result + ' -XReveal';
+  if WizardIsComponentSelected('deps\makemkv') then Result := Result + ' -MakeMKV';
   if (Result <> '') and WizardSilent then Result := Result + ' -NoPause';
 end;
 
