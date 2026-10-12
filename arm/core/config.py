@@ -119,9 +119,16 @@ def find_tool(name: str, configured: str = "") -> str | None:
     if configured and Path(configured).is_file():
         return configured
     exe = name + (".exe" if sys.platform == "win32" else "")
-    for candidate in (install_dir() / "tools" / exe, install_dir() / "tools" / name / exe):
+    tools = install_dir() / "tools"
+    for candidate in (tools / exe, tools / name / exe):
         if candidate.is_file():
             return str(candidate)
+    # Tools unpacked by the installer keep their archive layout
+    # (e.g. tools/ffmpeg/ffmpeg-n7.1-…/bin/ffmpeg.exe).
+    if tools.is_dir():
+        for candidate in sorted(tools.glob(f"*/**/{exe}")):
+            if candidate.is_file():
+                return str(candidate)
     found = shutil.which(name)
     if found:
         return found
