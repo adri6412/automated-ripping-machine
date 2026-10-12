@@ -77,9 +77,12 @@ jobs:
           python -c "from arm.core.config import find_tool; paths = {n: find_tool(n) for n in ('cyanrip', 'ffmpeg', 'mkvmerge')}; print(paths); assert all(paths.values())"
           & (python -c "from arm.core.config import find_tool; print(find_tool('mkvmerge'))") --version
 
+      # Best effort: an exhausted artifact storage quota must not block the release upload.
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
+          retention-days: 7
           name: AutoRipMachine-win64
           path: |
             ${{ steps.package.outputs.zip }}
